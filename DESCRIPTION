@@ -1,0 +1,14 @@
+Package: RDA
+Version: 0.1-0
+Title: Read RDA files using R
+Description: Simple-minded R-level tools to read RDA files
+  generated via the save() function.
+Author: Duncan Temple Lang
+Maintainer: Duncan Temple Lang <duncan@r-project.org>
+License: BSD
+Depends: bitops
+Note:  We might also implement an alternative version of
+  the RDA format that extends it by adding a table of contents
+  at the end of the file. This allows us to add new entries
+  and also to easily find the table of contents.
+  If anyone is interested in doing this, please go ahead.

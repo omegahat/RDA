@@ -1,0 +1,343 @@
+<?xml version="1.0"?>
+<article xmlns:r="http://www.r-project.org"
+         xmlns:xi="http://www.w3.org/2003/XInclude"
+	xmlns:c="http://www.C.org">
+
+<articleinfo>
+
+<title></title>
+
+<author><firstname>Duncan</firstname><surname>Temple Lang</surname>
+  <affiliation><orgname>University of California at Davis</orgname>
+               <orgdiv>Department of Statistics</orgdiv>
+  </affiliation>
+</author>
+</articleinfo>
+
+<section>
+<title></title>
+
+<para>
+THe idea is to use R's existing serialization facilities, but  to
+add a table of contents to the end of the file followed by 
+a single number which is the number of bytes to go back
+to get the table of contents.
+The table of contents would be a simple named integer
+vector which gives the names of the objects and
+their byte offset in the file.
+We might make this a data frame and have the class of the object.
+
+</para>
+<para>
+We would of course like to reuse all the existing R code
+(both R and C) with minimal changes.
+The challenge is to collect the offsets of
+the top-level objects being serialized.
+The main entry point is the <c:func>do_saveToConn</c:func>.
+This calls R_serialize having assembled a LISTSXP (dotted pair list)
+</para>
+
+
+<para>
+We can add two elements to the dotted pair list being serialized in
+do_saveToConn. These are a named integer vector giving the offsets
+from the start of the file of the individual elements being
+serialized, and the number of elements being serialized (excluding the
+table of offsets and this integer).  We can use these when reading the
+file.  We jump to the end of the file and read the number of elements
+being serialized. Since this is the value of the integer vector, we
+know how to read this by going backward from the end of the file.
+</para>
+
+
+<para>
+The main changes to the source code are 
+<ul>
+<li>Add an int * parameter to WriteItem</li>
+<li>Add an int * parameter to R_Serialize</li>
+<li>Add getConOffset() for an Rconnection</li>
+<li>Modify R_Serialize to add .tocNames, .toc, .toc.len to the dotted-pair list being serialized,
+  and pass the INTEGER pointer to R_Serialize which passes it to WriteItem for the top-most call</li>
+<li>Modify WriteItem to use the offsets pointer for the LISTSXP case, 
+    calling getConOffset() and inserting the value into the pointer and then
+    incrementing the pointer to move to the next int location for the next element of the LISTSXP.</li>
+</ul>
+
+3 files are modified: saveload.c, serialize.c and connections.c.
+
+
+</para>
+
+
+
+<para>
+What about appending the .toc to the end of an existing RDA file?
+Can we use <r:class>.saveRDS</r:class>?
+
+<r:function><![CDATA[
+appendRDA =
+function(file, what, id)
+{
+  rw = serialize(what, NULL)
+  rw = rw[-1]
+
+  nbytes = file.info(file)[1, "size"]
+  con = gzfile(file, "rb")
+  seek(con, nbytes - 1)
+  eof = readBin(con, "raw", 1)
+  close(con)
+
+  con = gzfile(file, "wb")
+  on.exit(close(con))
+  seek(con, nbytes  - 1)
+  writeBin(as.integer(SYMSXP), con)
+  writeBin(serialize(as.name(id), NULL)[-1], con, 1L)
+  writeBin(rw, con)
+  writeBin(eof, con)
+
+  file
+}
+]]></r:function>
+
+a = 1:10
+b = c(a = 2, d = 3)
+save(a, b, file = "/tmp/test.rda")
+
+appendRDA("/tmp/test.rda", c("Duncan", "Temple", "Lang"), "me")
+
+print(load("/tmp/test.rda"))
+
+</para>
+
+
+
+<para>
+What about serializing objects individually into a Zip archive?
+
+<r:code>
+d = list(a= serialize(a, NULL), b = serialize(b, NULL))
+zip("mySave.ser", d)
+ar = zipArchive("mySave.ser")
+names(ar)
+</r:code>
+
+</para>
+
+
+
+<para>
+
+con = gzfile("/tmp/ar.rda", "rb")
+seek(con, 4359)
+readSym(con)
+unserialize(con)
+</para>
+
+
+
+
+
+
+<para>
+This seems to be working now.
+
+There seems to be an issue with seek and gzfile on open connections as
+seeking to a particular spot and then attempting to read a value
+differs from creating a new connection and seeking.
+
+The following tests things and works! But this is not binary data.
+See getTOC().
+<r:code>
+con = gzfile("tmp", "w")
+cat(LETTERS, "\n", letters, "\n", sep = "", file = con)
+close(con)
+
+rcon = gzfile("tmp", "r")
+readLines(rcon)
+seek(rcon, 1)
+rcon2 = gzfile("tmp", "r")
+seek(rcon2, 1)
+readChar(rcon, 1)
+readChar(rcon2, 1)
+</r:code>
+
+</para>
+
+
+
+<para>
+
+
+<r:code>
+con = file("/tmp/foo", "wb")
+o = save(mtcars, letters, file = con)
+close(con)
+</r:code>
+
+
+<r:code>
+x = 1:10; con = file("/tmp/ar.rda", "wb"); save(mtcars, letters, LETTERS, x, file = con); close(con)
+print(load("/tmp/ar.rda"))
+.toc.len[2] == sum(nchar(.tocNames))
+</r:code>
+
+
+
+</para>
+<para>
+
+<r:code>
+library(RDA)
+len = file.info("/tmp/foo")[1, "size"]
+k = gzfile("/tmp/foo", "rb")
+seek(k, len - 2 * 4)
+numEls = RDA:::readXDRInteger(k)
+off = len - (2 * 4 + numEls * 4 + 4) 
+</r:code>
+
+
+We have to back up 4 bytes from the end.  Then, looking backwards, we
+have the 2 values of the integers in .toc.len (the number and the number of characters in .tocNames which we will use later),
+the length of the vector (2), and then
+the type of vector (INTSXP).  So we need only back up 2 * 4 bytes to
+get the value.
+
+To get to the beginning of the .toc integer vector (i.e. where it is declared as INTSXP and then given the length)
+we need to back up 4 * 4 bytes to get to the end of the ".toc.len" string. Then 
+we need back up 8 bytes and then 4 bytes telling us the length of this string,
+and then one more integer (4 bytes) identifying the type as a CHARSXP.
+And then we have to go back one more integer which identifies the SYMSXP.
+So this is a total of (4*4 + 8 + 4  + 4 + 4) = 40 bytes.
+
+So to get the type, length and values in .toc.len, we can use
+<r:code>
+library(RDA)
+toc.len.len = 4 + 4 * 2 + 4 + 4
+len = file.info("/tmp/ar.rda")[1, "size"]; k = gzfile("/tmp/ar.rda", "rb"); invisible(seek(k, len - toc.len.len))
+toc.len.info = replicate(4, RDA:::readXDRInteger(k))
+numEls = toc.len.info[3]
+</r:code>
+
+
+This doesn't take into account the SYMSXP ahead of the CHARSXP identifier.
+<r:code>
+k = gzfile("/tmp/ar.rda", "rb")
+toc.len.str.len =  8 + 4 + 4
+len = file.info("/tmp/ar.rda")[1, "size"]; k = gzfile("/tmp/ar.rda", "rb"); invisible(seek(k, len - toc.len.len - toc.len.str.len))
+replicate(2, RDA:::readXDRInteger(k))
+RDA:::readString(k, 8)
+</r:code>
+
+
+Where do the extra 4 bytes come from?
+The first is for the SYMSXP before the ".toc.len" string.
+What is the other one? A tag, flag or attribute?
+<r:code>
+toc.size = (numEls + 3) * 4 + 4 + 4
+k = gzfile("/tmp/ar.rda", "rb")
+invisible(seek(k, len - toc.size - toc.len.len - toc.len.str.len  -4  -4))
+i = replicate(2, RDA:::readXDRInteger(k)) 
+all(i ==  c(RDA:::INTSXP, numEls + 3))
+toc = replicate( numEls + 2, RDA:::readXDRInteger(k)) # note numEls + 2, not 3 as the last entry for .toc.len is garbage (why?)
+</r:code>
+We can compare this to .toc  from when we load the RDA file.
+
+
+Next, we can read the .tocNames vector.
+This one is easy. We have the offset in the file
+from the .toc entry we just read.
+
+<r:code>
+k = gzfile("/tmp/ar.rda", "rb")
+invisible(seek(k, toc[numEls + 1]))
+RDA:::readXDRInteger(k) # SYMSXP
+RDA:::readXDRInteger(k) # CHARSXP
+RDA:::readString(k, len = RDA:::readXDRInteger(k))
+RDA:::readXDRInteger(k) # STRSXP
+num = RDA:::readXDRInteger(k) # length
+
+replicate(numEls, {RDA:::readXDRInteger(k) ; RDA:::readString(k, RDA:::readXDRInteger(k))})
+</r:code>
+
+
+So let's put these into a function.
+
+<r:function><![CDATA[
+]]></r:function>
+
+
+
+
+We have the type (STRSXP), the length (numEls + 3), and then
+the collection of CHARSXP objects. 
+Each of these has a CHARSXP, the length of the string, and the
+string itself.
+We know the total number of characters
+from the second element of .toc.len, i.e. toc.len.info[4].
+
+<r:code>
+k = gzfile("/tmp/ar.rda", "rb")
+tocNames.len = 4 + 4 + 2 * (numEls + 3) + toc.len.info[4]
+invisible(seek(k, len - toc.len.len - toc.len.str.len  -4  -4  - toc.size -4 - tocNames.len))
+RDA:::readXDRInteger(k)  # should be STRSXP
+</r:code>
+
+
+
+Now we know we numEls + 3 in the .toc, so we can back up another (numEls + 3) * 4 bytes.
+
+
+<r:function><![CDATA[
+getTOCLength =
+function(file, len = file.info(file)[1, "size"])
+{
+  k = gzfile(file, "rb")
+  on.exit(close(k))
+  seek(k, len - 2 * 4)
+  RDA:::readXDRInteger(k)
+}
+
+
+getTOC =
+function(file)
+{
+  len = file.info(file)[1, "size"]
+  numEls = getTOCLength(file, len)
+  k = gzfile(file, "rb")
+  on.exit(close(k))
+
+   # need to skip over .toc.len,  an integer vector of length 1 so has 2 elements
+   # and then the string .toc.len, and then .toc an integer
+  
+  off = len - (3 * 4 + 4  +   # 1 element, 1 length, 1 type
+               (numEls + 1 + 3) * 4 + 
+                4 + 4 + nchar(".toc.len") + 1)
+browser()
+  seek(k, off)
+  RDA:::readXDRInteger(k)
+}
+]]></r:function>
+
+
+<r:function><![CDATA[
+readVecAt =
+function(file, at, len = file.info(file)[1, "size"])
+{
+  k = gzfile(file, "rb")
+  on.exit(close(k))
+  RDA:::readVector(k, '13', 7)
+}
+]]></r:function>
+
+
+
+<r:code>
+x = 1:10; con = file("/tmp/ar.rda", "wb"); save(mtcars, letters, LETTERS, x, file = con); close(con)
+</r:code>
+
+
+</para>
+
+
+</section>
+</article>

@@ -1,0 +1,3 @@
+useDynLib(RDA)
+export(tocRDA)
+

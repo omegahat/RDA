@@ -1,0 +1,78 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title></title><link rel="stylesheet" href="/Users/duncan/Classes/StatComputing/XDynDocs/inst/CSS/OmegaTech.css" type="text/css"></link><meta name="generator" content="DocBook XSL Stylesheets V1.75.2"></meta>
+<link xmlns="" rel="stylesheet" type="text/css" href="http://yui.yahooapis.com/2.8.0r4/build/tabview/assets/skins/sam/tabview.css">
+<script xmlns="" type="text/javascript" src="http://yui.yahooapis.com/2.8.0r4/build/yahoo-dom-event/yahoo-dom-event.js"></script>
+<script xmlns="" type="text/javascript" src="http://yui.yahooapis.com/2.8.0r4/build/element/element-min.js"></script>
+<script xmlns="" type="text/javascript" src="http://yui.yahooapis.com/2.8.0r4/build/tabview/tabview-min.js"></script>
+<script xmlns="" type="text/javascript" src="/Users/duncan/Classes/StatComputing/XDynDocs/inst/JavaScript/yahooTabUtils.js"></script>
+<script xmlns="" type="text/javascript" src="http://www.omegahat.org/DynDocs/JavaScript/toggleHidden.js"></script>
+</head><body class="yui-skin-sam">
+<script xmlns="" type="text/javascript"><!--
+var toggleCodeIds = [
+ 
+];
+--></script><p xmlns=""></p>
+<div class="article"><div class="titlepage"><div><div><h2 class="title"><a id="id36210934"></a></h2></div><div><div class="author"><h3 class="author"><span class="firstname">Duncan</span> <span class="surname">Temple Lang</span></h3><div class="affiliation"><span class="orgname">University of California at Davis<br></br></span> <span class="orgdiv">Department of Statistics<br></br></span></div></div></div></div><hr></hr></div><div class="section"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a id="id36261896"></a></h2></div></div></div><p>
+The <i xmlns:s3="http://www.r-project.org/S3" xmlns:cpp="http://www.cplusplus.org" xmlns:xi="http://www.w3.org/2001/XInclude" xmlns="" class="rfunc"><a href="Help//save.html">save()
+  </a></i> and corresponding <i xmlns:s3="http://www.r-project.org/S3" xmlns:cpp="http://www.cplusplus.org" xmlns:xi="http://www.w3.org/2001/XInclude" xmlns="" class="rfunc"><a href="Help//load.html">load()
+  </a></i>
+functions allow people to easily collect one or more R objects
+in a single portable archive and to distribute these and restore them
+in different R sessions. 
+Often people store a single object in such a file and the name of the
+file is sufficient to describe the contents.
+In other cases, however, there are many variable stored in a single
+object and the name does not adequately describe the individual elements.
+To find the names of the variables in such a file, we have to restore the contents of the entire file. 
+This can be time consuming and unnecessary as we may not want the values themselves, but just 
+the names.
+Even when we want the contents, we may not want the value for all variables, 
+but just a couple. Again, we have to read the entire contents of the file,
+allocating memory unnecessarily.
+</p><p>
+In this short paper, we discuss different approaches to provide better access to
+i) accessing the names of the variables within an R data file,
+ii) accessing individual elements directly without  having to 
+  read through the entire file up to the object of interest.
+It takes only a moment to see that if we added a character vector containing
+the names of the objects within the file, we could
+access this directly and use this to address i), i.e. providing
+a table of contents for the RDA file.
+If we also included the  offset in bytes from the start
+of the RDA file at which each of the top-level objects
+started, we could use that to rapidly access and extract
+individual elements within the RDA file.
+We know the names of the variables before we write the RDA
+file. We don't know the offsets of the i-th variable
+until we write the first i - 1 elements to the file.
+We can put the names of the variables into a "hidden" variable
+at the beginning of the file. It makes most sense
+to put the offsets as a value at the end of the RDA file.
+Since we place the offsets at the end, we might also place
+the names at the end and leave the original format as is
+and merely append to the end of that format.
+</p><p>
+One approach to this format is to add the 
+character vector of names as the 3rd last element
+of the RDA file, after all the regular objects
+are written. We can put the offsets after this
+and include the offset of the character vector of names
+within that vector.  We need one other piece of information.
+</p><p>
+We could avoid adding the vector of names.
+Instead, once we can locate the offsets, we can 
+jump to each of these and read the SYMSXP immediately there.
+Unfortunately, the symbol may not be located immediately at the
+offset as some objects may have attributes that are written out
+before the object itself, e.g. LANGSXP, PROMSXP, DOTSXP and LISTSXP - all 
+somewhat non-standard objects.
+There are also issues with references to a common table of shared objects.
+</p><p>
+Instead of merely including the vector of names of the objects
+and a separate vector of offsets, we might include a data frame
+with a row for each object. We might include the 
+the class, type, length and name of the object. 
+We might also include whether it is an S4 object,
+whether it has attributes. 
+</p></div></div></body></html>
